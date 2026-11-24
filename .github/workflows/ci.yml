@@ -38,6 +38,6 @@ jobs:
     permissions:
       actions: write
       contents: read
-    uses: Silo-Server/silo-server/.github/workflows/trusted-linux-ci.yml@main
+    uses: ./.github/workflows/trusted-linux-ci.yml
     with:
       self_hosted: false

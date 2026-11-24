@@ -1,3 +1,25 @@
+# Granary
+
+Granary is a fork of [Silo](https://github.com/Silo-Server/silo-server) that is being reshaped
+into a small core with everything else as plugins. It is not affiliated with or endorsed by the
+Silo project. The fork's owner decides how this codebase is built.
+
+Everything below this section was inherited from Silo and still describes Silo's code
+accurately. Its process rules were written for Silo's upstream repository, and these do not
+apply here:
+
+- **Pull requests.** There is no contribution gate, evidence page, validation board, or required
+  disclosure block. Use the short template in `.github/PULL_REQUEST_TEMPLATE.md`.
+- **Other repositories.** Do not open issues or pull requests in any `Silo-Server` repository on
+  Granary's behalf. That covers the client parity, `silo-translations` and `siloserver.org`
+  steps below. Note the follow-up in the pull request instead.
+- **Non-goals.** Silo's non-goals are not Granary's. Scope is decided in this repository.
+- **Naming.** "Silo" is a trademark of Silo Media L.L.C. (see `TRADEMARK.md`). New user-facing
+  names use Granary. Existing identifiers are being renamed in stages; do not rename them as a
+  side effect of other work.
+
+The gotchas (migrations, encrypted settings, profiles and accounts) apply unchanged.
+
 # Silo Server
 
 Go backend for Silo: API contracts, auth/session, catalog/scanner/playback services, database
