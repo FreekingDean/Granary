@@ -1,0 +1,432 @@
+import { useState, type ReactNode } from "react";
+import { Link } from "react-router";
+import {
+  CircleCheck,
+  CircleMinus,
+  CircleX,
+  Download,
+  LoaderCircle,
+  TriangleAlert,
+} from "lucide-react";
+
+import type { AdminBackup, AdminBackupActive } from "@/api/v2/adminBackups";
+import type {
+  RestoreJob,
+  RestoreReportAccount,
+  RestoreReportItem,
+} from "@/api/v2/adminBackupRestore";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { OVERFLOW_CLIP, useOverflowsInline } from "@/hooks/useOverflowsInline";
+import { useT, type MessageKey } from "@/i18n";
+import { formatTime } from "@/lib/datetime";
+import { DATA_TYPE_LABELS, dataCountsPhrase, titleList } from "@/lib/profileDataTypes";
+import { cn } from "@/lib/utils";
+import { FieldGroup } from "@/pages/admin-settings/FieldGroup";
+import { SettingFieldStatus } from "@/pages/admin-settings/SettingField";
+
+import { backupDateTime } from "./backupPresentation";
+import {
+  REASON_SENTENCES,
+  REPORT_ERROR_SENTENCES,
+  SECTION_TITLES,
+  displayLabel,
+  reportHeadline,
+} from "./restoreModel";
+
+const OUTCOME = {
+  restored: {
+    label: "web.admin.backups.restore.outcome.restored",
+    Icon: CircleCheck,
+    tone: "text-green-600 dark:text-green-400",
+  },
+  unchanged: {
+    label: "web.admin.backups.restore.outcome.unchanged",
+    Icon: CircleMinus,
+    tone: "text-muted-foreground",
+  },
+  left_out: {
+    label: "web.admin.backups.restore.outcome.leftOut",
+    Icon: TriangleAlert,
+    tone: "text-amber-600 dark:text-amber-400",
+  },
+  failed: {
+    label: "web.admin.backups.restore.outcome.failed",
+    Icon: CircleX,
+    tone: "text-destructive",
+  },
+} satisfies Record<RestoreReportItem["outcome"], { label: MessageKey; [key: string]: unknown }>;
+
+/** Keeps each "·" with the word after it, so a wrapped line never ends on a separator. */
+function keepSeparatorsWithNext(node: ReactNode): ReactNode {
+  if (typeof node === "string") return node.replace(/· /g, "·\u00a0");
+  return Array.isArray(node) ? node.map(keepSeparatorsWithNext) : node;
+}
+
+/** Joins a short status's words ("Left out") with no-break spaces. */
+function nonBreaking(text: string): string {
+  return text.replace(/ /g, "\u00a0");
+}
+
+function ReportRow({ item }: { item: RestoreReportItem }) {
+  const t = useT();
+  const outcome = OUTCOME[item.outcome];
+  const details = [
+    item.outcome === "left_out" && item.reason ? t(REASON_SENTENCES[item.reason]) : null,
+    item.error ?? null,
+    item.message ?? null,
+    ...item.notes,
+    item.missing_blobs.length > 0
+      ? t("web.admin.backups.restore.run.filesMissing", {
+          count: item.missing_blobs.length,
+          count_text: item.missing_blobs.length,
+        })
+      : null,
+    item.restart_keys.length > 0
+      ? t("web.admin.backups.restore.run.restartKeys", { keys: item.restart_keys.join(", ") })
+      : item.restart_required
+        ? t("web.admin.backups.restore.run.restart")
+        : null,
+  ].filter((detail): detail is string => Boolean(detail));
+  const label = displayLabel(item);
+  const [columnRef, columnOverflows] = useOverflowsInline<HTMLDivElement>(item);
+  return (
+    <li className="border-border/60 flex items-start gap-3 border-b py-3 last:border-b-0">
+      <outcome.Icon aria-hidden="true" className={cn("mt-0.5 size-4 shrink-0", outcome.tone)} />
+      {/* Only while a line is still wider than the row after wrapping, such as one holding a
+          long run of joined emoji in a name or a note, does the row clip sideways at its end
+          edge; the words around the run still wrap, and a name's title shows it in full. */}
+      <div ref={columnRef} className={cn("min-w-0 flex-1", columnOverflows && OVERFLOW_CLIP)}>
+        <p className="text-sm wrap-anywhere">
+          {t("web.admin.backups.restore.run.itemLine", {
+            // <bdi>, not the isolate characters a string value gets in right-to-left languages:
+            // the line could break after the opening isolate, before a name that can't wrap,
+            // and leave the first line empty.
+            label: <bdi>{label}</bdi>,
+            section: t(SECTION_TITLES[item.section]),
+            // The status stays whole: no break at its spaces or between its Chinese, Japanese,
+            // or Korean characters. One wider than the line still breaks, through
+            // `wrap-anywhere`. (An inline block would let the line break before it, leaving
+            // the message's "·" at the end of a line.) <bdi> keeps the direction isolation a
+            // string value gets in right-to-left languages.
+            outcome: <bdi className="break-keep">{nonBreaking(t(outcome.label))}</bdi>,
+            // The label is isolated in every language, so a right-to-left name or one with a
+            // direction override can't reorder the " · section · outcome" text after it.
+            b: (chunks) => (
+              <bdi title={label} className="font-medium">
+                {chunks}
+              </bdi>
+            ),
+            muted: (chunks) => (
+              <span className="text-muted-foreground">{keepSeparatorsWithNext(chunks)}</span>
+            ),
+          })}
+        </p>
+        {details.map((detail, position) => (
+          <p key={position} className="text-muted-foreground mt-0.5 text-[0.8125rem] break-words">
+            {detail}
+          </p>
+        ))}
+        {item.account ? (
+          <AccountReport account={item.account} described={Boolean(item.message)} />
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function ReportList({ label, items }: { label: string; items: readonly RestoreReportItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <FieldGroup label={label}>
+      <ul>
+        {items.map((item) => (
+          <ReportRow key={`${item.section}:${item.id}`} item={item} />
+        ))}
+      </ul>
+    </FieldGroup>
+  );
+}
+
+/** An account's report: whether it was created, each profile, and each data type's counts. */
+function AccountReport({
+  account,
+  described,
+}: {
+  account: RestoreReportAccount;
+  /** The item's own message already says what happened to the account. */
+  described: boolean;
+}) {
+  const t = useT();
+  return (
+    <div className="mt-2 space-y-2">
+      {described ? null : (
+        <p className="text-[0.8125rem]">
+          {account.created
+            ? t("web.admin.backups.restore.run.accountCreated")
+            : t("web.admin.backups.restore.run.accountMerged")}
+        </p>
+      )}
+      {account.profiles.length > 0 ? (
+        <ul className="border-border/60 space-y-2 border-s ps-3">
+          {account.profiles.map((profile) => {
+            const outcome = OUTCOME[profile.outcome];
+            return (
+              <li key={profile.id}>
+                {/* rem text with a unitless line height keeps the line taller than the
+                    rem-sized icon at any browser font size, so the icon stays centered on it. */}
+                <p className="flex items-start gap-1.5 text-[0.8125rem] leading-normal">
+                  <span className="flex min-h-lh shrink-0 items-center">
+                    <outcome.Icon aria-hidden="true" className={cn("size-3.5", outcome.tone)} />
+                  </span>
+                  <span className="min-w-0 wrap-anywhere">
+                    {/* The outcome moves to the next line as a unit, so its "·" stays with the
+                        word it introduces, and wraps inside itself only when it can't fit on a
+                        line; a no-break space keeps the "·" with the word then too. The gap is
+                        the name's margin, left behind at the end of the line. */}
+                    <span className="me-1.5 font-medium">
+                      {/* <bdi> isolates the name's direction. It sits inside the span, so the
+                          margin follows the page's direction, not the name's. */}
+                      <bdi title={profile.label}>{profile.label}</bdi>
+                    </span>
+                    <wbr />
+                    <span className="text-muted-foreground inline-block">
+                      {keepSeparatorsWithNext(
+                        t("web.admin.backups.restore.run.profileOutcome", {
+                          outcome: profile.created
+                            ? t("web.admin.backups.restore.outcome.created")
+                            : t(outcome.label),
+                        }),
+                      )}
+                    </span>
+                  </span>
+                </p>
+                {[
+                  profile.outcome === "left_out" && profile.reason
+                    ? t(REASON_SENTENCES[profile.reason])
+                    : null,
+                  profile.message ?? null,
+                  ...profile.notes,
+                ]
+                  .filter((line): line is string => Boolean(line))
+                  .map((line, position) => (
+                    <p key={position} className="text-muted-foreground text-xs break-words">
+                      {line}
+                    </p>
+                  ))}
+                {profile.data.length > 0 ? (
+                  <ul className="mt-1 space-y-0.5 text-xs">
+                    {profile.data.map((data) => (
+                      <li key={data.type}>
+                        {t("web.admin.backups.restore.run.dataLine", {
+                          label: DATA_TYPE_LABELS[data.type],
+                          counts: dataCountsPhrase(data),
+                          muted: (chunks) => (
+                            <span className="text-muted-foreground tabular-nums">{chunks}</span>
+                          ),
+                        })}
+                        {data.notes.map((note, position) => (
+                          <span
+                            key={position}
+                            className="text-muted-foreground block wrap-anywhere"
+                          >
+                            {note}
+                          </span>
+                        ))}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {account.unmatched.length > 0 ? (
+        <p className="text-muted-foreground text-xs break-words">
+          {t("web.admin.backups.restore.run.unmatched", { titles: titleList(account.unmatched) })}
+        </p>
+      ) : null}
+      {account.hidden.length > 0 ? (
+        <p className="text-muted-foreground text-xs break-words">
+          {t("web.admin.backups.restore.run.hidden", { titles: titleList(account.hidden) })}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function downloadReport(job: RestoreJob) {
+  const blob = new Blob([JSON.stringify(job.backup_restore_result ?? {}, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  const result = job.backup_restore_result;
+  anchor.download = `silo-restore-report-${result?.backup_id || result?.upload_id || job.id}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * The report's actions are never wider than the page: a label too long for
+ * the row wraps inside its button instead of running past the right edge.
+ */
+const RUN_ACTION =
+  "h-auto min-h-9 max-w-full py-1.5 text-start text-balance wrap-anywhere whitespace-normal";
+
+export interface RestoreRunProps {
+  job: RestoreJob;
+  /** This server's backups, to name the recovery point by its time. */
+  backups: AdminBackup[];
+  /** The lock holder from the backups list, for the item being restored. */
+  active: AdminBackupActive | undefined;
+  onCancel: () => void;
+  cancelPending: boolean;
+  onChooseAgain: () => void;
+}
+
+/** Step 3: progress while the job runs, then its report. */
+export function RestoreRun({
+  job,
+  backups,
+  active,
+  onCancel,
+  cancelPending,
+  onChooseAgain,
+}: RestoreRunProps) {
+  const t = useT();
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const report = job.backup_restore_result;
+  const items = report?.items ?? [];
+
+  if (!job.terminal) {
+    const progress = job.progress;
+    const percent =
+      progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+    const stopping = job.state === "canceling";
+    const progressNote =
+      progress && progress.total > 0
+        ? t("web.admin.backups.restore.run.steps", {
+            total: progress.total,
+            current_text: progress.current,
+            total_text: progress.total,
+          })
+        : t("web.admin.backups.restore.run.backsUpFirst");
+    return (
+      <div className="max-w-[70rem] space-y-5">
+        <div className="surface-panel space-y-3 rounded-2xl p-5" role="status">
+          <div className="flex items-start gap-2 text-sm font-medium wrap-anywhere">
+            <span className="flex min-h-lh shrink-0 items-center">
+              <LoaderCircle aria-hidden="true" className="size-4 motion-safe:animate-spin" />
+            </span>
+            {stopping
+              ? t("web.admin.backups.restore.run.stopping")
+              : job.state === "queued"
+                ? t("web.admin.backups.restore.run.waiting")
+                : t("web.admin.backups.restore.run.restoring")}
+          </div>
+          <Progress value={percent} aria-label={t("web.admin.backups.restore.run.progressLabel")} />
+          <p className="text-muted-foreground text-[0.8125rem]">
+            {active?.operation === "restore" && active.message
+              ? t("web.admin.backups.restore.run.withServerMessage", {
+                  text: progressNote,
+                  message: active.message,
+                })
+              : progressNote}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!job.cancelable || stopping || cancelPending}
+            onClick={() => setConfirmCancel(true)}
+          >
+            {t("web.admin.backups.restore.run.stop")}
+          </Button>
+        </div>
+        <ReportList label={t("web.admin.backups.restore.run.doneSoFar")} items={items} />
+        <ConfirmDialog
+          open={confirmCancel}
+          onOpenChange={setConfirmCancel}
+          title={t("web.admin.backups.restore.run.stopTitle")}
+          description={t("web.admin.backups.restore.run.stopDescription")}
+          confirmLabel={t("web.admin.backups.restore.run.stop")}
+          cancelLabel={t("web.admin.backups.restore.run.keepRestoring")}
+          variant="destructive"
+          onConfirm={onCancel}
+        />
+      </div>
+    );
+  }
+
+  const recovery = report?.before_restore_backup_id
+    ? backups.find((backup) => backup.id === report.before_restore_backup_id)
+    : undefined;
+  const code = report?.error_code ?? (report?.interrupted ? "interrupted" : undefined);
+  let ending: string | null = null;
+  if (job.state === "canceled") {
+    ending = t("web.admin.backups.restore.run.canceled");
+  } else if (code) ending = t(REPORT_ERROR_SENTENCES[code]);
+  else if (job.state === "failed") ending = t(REPORT_ERROR_SENTENCES.failed);
+  // The server's own words, when they add to the sentence above.
+  const detail =
+    ending && code !== "interrupted"
+      ? (report?.error ?? (report ? null : job.failure?.detail))
+      : null;
+
+  return (
+    <div className="max-w-[70rem] space-y-5">
+      <div className="space-y-2">
+        <p className="text-base font-medium">
+          {report ? reportHeadline(report.counts) : t("web.admin.backups.restore.run.noReport")}
+        </p>
+        {job.finished_at ? (
+          <p className="text-muted-foreground text-[0.8125rem]">
+            {t("web.admin.backups.restore.run.finished", {
+              date: backupDateTime(job.finished_at),
+            })}
+          </p>
+        ) : null}
+        {ending ? <SettingFieldStatus tone="warn">{ending}</SettingFieldStatus> : null}
+        {detail ? (
+          <p className="text-muted-foreground text-[0.8125rem] break-words">{detail}</p>
+        ) : null}
+      </div>
+
+      <ReportList label={t("web.admin.backups.restore.run.report")} items={items} />
+
+      {report?.before_restore_backup_id ? (
+        <p className="text-muted-foreground text-sm leading-relaxed">
+          {t("web.admin.backups.restore.run.recovery", {
+            copy: recovery ? formatTime(recovery.created_at) : report.before_restore_backup_id,
+            link: (chunks) => (
+              <Link
+                to={`/admin/backups?backup=${encodeURIComponent(report.before_restore_backup_id!)}`}
+                className="text-foreground underline underline-offset-2"
+              >
+                {chunks}
+              </Link>
+            ),
+            code: (chunks) => <code className="font-mono text-xs">{chunks}</code>,
+          })}
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        {report ? (
+          <Button variant="outline" className={RUN_ACTION} onClick={() => downloadReport(job)}>
+            <Download data-icon="inline-start" aria-hidden="true" />
+            {t("web.admin.backups.restore.run.downloadReport")}
+          </Button>
+        ) : null}
+        <Button variant="outline" className={RUN_ACTION} onClick={onChooseAgain}>
+          {t("web.admin.backups.restore.run.chooseAgain")}
+        </Button>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,180 @@
+import { useState } from "react";
+
+import type { ConnectionCheckResponse } from "@/api/types";
+import { ConnectionCheckAction } from "@/components/admin/ConnectionCheckAction";
+import { SecretField } from "@/components/settings/SecretField";
+import { useCheckAdminSettingsConnection } from "@/hooks/queries/admin/settings";
+import type { RestartKeyMatcher } from "@/hooks/useRestartKeys";
+import type { useSettingsForm } from "@/hooks/useSettingsForm";
+import { useT } from "@/i18n";
+
+import { FieldGroup } from "./FieldGroup";
+import { SettingField } from "./SettingField";
+import { REDIS_KEYS, keepSavedRedisUrl, stageRedisUrl } from "./redisDraft";
+
+/**
+ * How the page stages the connection URL. The page freezes both while a save
+ * is in flight, so a late keystroke cannot ride along with it; emptying the
+ * input reverts to the saved URL (`keepSaved`).
+ */
+const REDIS = "Redis";
+const REDIS_URL_EXAMPLE = "redis://host:6379";
+
+export interface RedisUrlEditors {
+  keepSaved: (key: string) => void;
+  setSecret: (key: string, value: string, options?: { stage?: boolean }) => void;
+  disabled: boolean;
+}
+
+export function RedisGroup({
+  form,
+  restartKeys,
+  secrets,
+  savesAndDiscards,
+}: {
+  form: ReturnType<typeof useSettingsForm>;
+  restartKeys: RestartKeyMatcher;
+  secrets: RedisUrlEditors;
+  /** Counts the page's completed saves and its discards. */
+  savesAndDiscards: number;
+}) {
+  const t = useT();
+  const checkConnection = useCheckAdminSettingsConnection();
+  const [connectionResult, setConnectionResult] = useState<ConnectionCheckResponse | null>(null);
+  const redisUrl = form.getValue("redis.url");
+  const urlEnv = form.envVar("redis.url");
+  const configured = form.sensitiveConfigured.includes("redis.url");
+  const [enabledOverride, setEnabledOverride] = useState<boolean | null>(null);
+  // Saving or discarding clears the toggle override so it follows the stored
+  // URL again. Running out of unsaved changes is not the same: erasing what
+  // was typed into a field with nothing saved takes back its edit while the
+  // admin is still working. Adjusting during render (rather than in an effect)
+  // keeps the override alive while the admin is still editing.
+  const [lastSavesAndDiscards, setLastSavesAndDiscards] = useState(savesAndDiscards);
+  if (lastSavesAndDiscards !== savesAndDiscards) {
+    setLastSavesAndDiscards(savesAndDiscards);
+    setEnabledOverride(null);
+  }
+  // Once REDIS_URL sets the connection the switch is locked, so a choice
+  // made before it took over no longer applies.
+  if (urlEnv && enabledOverride !== null) setEnabledOverride(null);
+  // A staged Redis edit keeps the fields in view, so a URL removed elsewhere
+  // can't hide a number that would then be dropped on save.
+  const enabled =
+    enabledOverride ??
+    (redisUrl.trim() !== "" || configured || REDIS_KEYS.some((key) => form.isDirty(key)));
+  // URL edits go through the page's editors, which drop a keystroke that
+  // arrives while a save is in flight.
+  const urlDraft = { ...form, setValue: secrets.setSecret, resetValue: secrets.keepSaved };
+
+  async function handleCheckConnection() {
+    try {
+      setConnectionResult(
+        await checkConnection.mutateAsync({
+          kind: "redis",
+          body: form.buildConnectionCheckRequest(REDIS_KEYS),
+        }),
+      );
+    } catch (error) {
+      setConnectionResult({
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : t("web.admin.settings.fields.connectionCheckFailed"),
+      });
+    }
+  }
+
+  return (
+    <FieldGroup
+      label={REDIS}
+      restartAll={REDIS_KEYS.every((key) => restartKeys.has(key))}
+      dirty={REDIS_KEYS.some((key) => form.isDirty(key))}
+    >
+      <SettingField
+        label={t("web.admin.settings.redis.enabled.label")}
+        type="toggle"
+        description={t("web.admin.settings.redis.enabled.description")}
+        value={enabled ? "true" : "false"}
+        onChange={(value) => {
+          // The switch stages or takes back the credential, so it holds still
+          // while a save is in flight, like the URL field below.
+          if (secrets.disabled) return;
+          if (value === "true") {
+            // With a URL saved, taking back the switch-off leaves nothing
+            // staged, so the switch follows what is saved again. With none
+            // saved, it stays on so a URL can be typed.
+            setEnabledOverride(configured ? null : true);
+            // Takes back a staged switch-off, which cleared the number too.
+            form.resetValue("redis.url");
+            form.resetValue("redis.db");
+            return;
+          }
+          // With no saved URL there is nothing to switch off: drop what was
+          // typed, since the fields that showed it are about to hide. The
+          // switch then follows what is saved again, so a URL saved elsewhere
+          // later still shows.
+          if (!configured) {
+            setEnabledOverride(null);
+            form.resetValue("redis.url");
+            form.resetValue("redis.db");
+            return;
+          }
+          setEnabledOverride(false);
+          stageRedisUrl(form, "");
+        }}
+        disabled={secrets.disabled}
+        restartRequired={restartKeys.has("redis.url")}
+        managedByEnv={urlEnv}
+      />
+      {enabled && (
+        <>
+          {/*
+            No `onClear` here: the Use Redis switch above already stages the
+            empty URL, and one clear per surface is the rule.
+          */}
+          <SecretField
+            label={t("web.admin.settings.redis.url.label")}
+            value={redisUrl}
+            configured={configured}
+            onKeep={() => keepSavedRedisUrl(urlDraft)}
+            onChange={(v) => stageRedisUrl(urlDraft, v)}
+            hint={REDIS_URL_EXAMPLE}
+            disabled={secrets.disabled}
+            restartRequired={restartKeys.has("redis.url")}
+            managedByEnv={urlEnv}
+          />
+          {/*
+            The server reports the number in use here while none is saved: the
+            one in the URL, or in REDIS_URL when the environment supplies it.
+          */}
+          <SettingField
+            label={t("web.admin.settings.redis.db.label")}
+            dirty={form.isDirty("redis.db")}
+            type="number"
+            description={t("web.admin.settings.redis.db.description")}
+            value={form.getValue("redis.db")}
+            onChange={(v) => {
+              if (!secrets.disabled) form.setValue("redis.db", v);
+            }}
+            disabled={secrets.disabled}
+            restartRequired={restartKeys.has("redis.db")}
+            managedByEnv={form.envVar("redis.db")}
+          />
+          {/*
+            Env-managed URLs stay checkable: the field is read-only so nothing
+            is dirty, and the server checks the effective value it merged from
+            REDIS_URL. Only writes are refused for env-managed keys.
+          */}
+          <ConnectionCheckAction
+            onClick={handleCheckConnection}
+            result={connectionResult}
+            isPending={checkConnection.isPending}
+            disabled={form.isSaving}
+          />
+        </>
+      )}
+    </FieldGroup>
+  );
+}

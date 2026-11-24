@@ -1,0 +1,186 @@
+import { useId } from "react";
+import { Direction } from "radix-ui";
+
+import type { PluginAdminFormField } from "@/api/types";
+import {
+  effectiveValue,
+  isSecretField,
+  rendersMultiline,
+  textDirection,
+} from "@/components/admin/plugins/schemaFormUtils";
+import { useT } from "@/i18n";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
+
+import {
+  SETTINGS_CONTROL_WIDTH,
+  SETTINGS_NUMBER_WIDTH,
+  SettingFieldRow,
+  SettingFieldStatus,
+} from "./SettingField";
+
+// Radix reserves the empty string for "no selection", so an option whose
+// value is "" (a plugin's "Provider default") travels as a stand-in.
+const EMPTY_OPTION_VALUE = "\u0000empty";
+
+interface SignInConfigFieldProps {
+  field: PluginAdminFormField;
+  values: Record<string, unknown>;
+  idPrefix: string;
+  dirty: boolean;
+  managed?: boolean;
+  /** A secret saved on the server; the input stays blank to keep it. */
+  secretSaved?: boolean;
+  /** The saved secret is staged to be cleared. */
+  clearing?: boolean;
+  onChange: (value: unknown) => void;
+  onToggleClear?: () => void;
+  /** Overrides the plugin's label and description (the page's own steps). */
+  label?: string;
+  description?: string;
+}
+
+/**
+ * One field of a sign-in plugin's configuration as a settings row, so plugin
+ * fields line up with the page's own settings.
+ */
+export function SignInConfigField({
+  field,
+  values,
+  idPrefix,
+  dirty,
+  managed = false,
+  secretSaved = false,
+  clearing = false,
+  onChange,
+  onToggleClear,
+  label,
+  description,
+}: SignInConfigFieldProps) {
+  const t = useT();
+  const pageDir = Direction.useDirection();
+  const id = `${idPrefix}-${field.key}`;
+  const descriptionId = useId();
+  const value = effectiveValue(field, values);
+  const text = String(value ?? "");
+  const secret = isSecretField(field);
+  const hint = description ?? field.description;
+  const noteId = useId();
+  const describedBy =
+    [hint ? descriptionId : undefined, managed ? noteId : undefined].filter(Boolean).join(" ") ||
+    undefined;
+
+  let control: React.ReactNode;
+  if (field.control === "SWITCH") {
+    control = (
+      <Switch
+        id={id}
+        checked={Boolean(value)}
+        disabled={managed}
+        onCheckedChange={onChange}
+        aria-describedby={describedBy}
+      />
+    );
+  } else if (field.control === "SELECT") {
+    const options = field.options ?? [];
+    const toItem = (item: string) => (item === "" ? EMPTY_OPTION_VALUE : item);
+    control = (
+      <Select
+        value={toItem(text)}
+        disabled={managed}
+        onValueChange={(next) => onChange(next === EMPTY_OPTION_VALUE ? "" : next)}
+      >
+        <SelectTrigger id={id} className={SETTINGS_CONTROL_WIDTH} aria-describedby={describedBy}>
+          <SelectValue
+            placeholder={field.placeholder || t("web.admin.settings.signIn.configField.select")}
+          />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={toItem(option.value)}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  } else if (rendersMultiline(field)) {
+    control = (
+      <textarea
+        id={id}
+        dir={textDirection(pageDir, text, field.placeholder, false)}
+        disabled={managed}
+        rows={field.rows && field.rows > 0 ? field.rows : 3}
+        value={text}
+        placeholder={field.placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        aria-describedby={describedBy}
+        className={cn(
+          SETTINGS_CONTROL_WIDTH,
+          "border-border bg-background placeholder:text-muted-foreground min-h-20 rounded-md border px-3 py-2 font-mono text-xs shadow-xs outline-none",
+          "focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+        )}
+      />
+    );
+  } else {
+    const placeholder =
+      secret && secretSaved && (managed || !clearing)
+        ? t("web.admin.settings.signIn.configField.secretSavedPlaceholder")
+        : field.placeholder;
+    control = (
+      <Input
+        id={id}
+        dir={textDirection(pageDir, text, placeholder, secret)}
+        disabled={managed}
+        type={secret ? "password" : field.control === "NUMBER" ? "number" : "text"}
+        autoComplete={secret ? "new-password" : "off"}
+        value={text}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        aria-describedby={describedBy}
+        className={field.control === "NUMBER" ? SETTINGS_NUMBER_WIDTH : SETTINGS_CONTROL_WIDTH}
+      />
+    );
+  }
+
+  return (
+    <SettingFieldRow
+      label={label ?? (field.label || field.key)}
+      htmlFor={id}
+      dirty={dirty}
+      description={description ?? field.description}
+      descriptionId={descriptionId}
+      status={
+        managed ? (
+          <SettingFieldStatus>
+            <span id={noteId}>{t("web.admin.plugins.provisioning.managed")}</span>
+          </SettingFieldStatus>
+        ) : secret && secretSaved && onToggleClear && !field.required ? (
+          <span className="inline-flex items-center gap-2">
+            <SettingFieldStatus tone={clearing ? "warn" : "muted"}>
+              {clearing
+                ? t("web.admin.settings.signIn.configField.willClear")
+                : t("web.admin.settings.signIn.configField.saved")}
+            </SettingFieldStatus>
+            <Button type="button" size="xs" variant="ghost" onClick={onToggleClear}>
+              {clearing
+                ? t("web.admin.settings.signIn.configField.keep")
+                : t("web.admin.settings.signIn.configField.clear")}
+            </Button>
+          </span>
+        ) : null
+      }
+    >
+      {control}
+    </SettingFieldRow>
+  );
+}
