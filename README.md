@@ -1,3 +1,10 @@
+> [!NOTE]
+> **This is Granary, a fork of [Silo](https://github.com/Silo-Server/silo-server).** It is an
+> independent project and is not affiliated with or endorsed by Silo or Silo Media L.L.C.
+> Granary is at an early stage and has not diverged from Silo yet, so the rest of this README
+> still describes Silo. Its install commands, image names, links and support channels point at
+> the upstream project. For a working media server today, use Silo.
+
 <p align="center">
   <img src="assets/icon.png" alt="Silo logo" width="112" height="112">
 </p>

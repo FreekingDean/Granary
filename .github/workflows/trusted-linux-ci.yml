@@ -89,7 +89,7 @@ jobs:
       - name: Check out the CI tools from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: Silo-Server/silo-server
+          repository: ${{ github.repository }}
           ref: ${{ job.workflow_sha || 'refs/heads/main' }}
           path: .ci-tools
           fetch-depth: 1
@@ -221,7 +221,7 @@ jobs:
       - name: Check out the case-collision checker from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: Silo-Server/silo-server
+          repository: ${{ github.repository }}
           ref: ${{ job.workflow_sha || 'refs/heads/main' }}
           path: .ci-tools
           fetch-depth: 1
@@ -387,7 +387,7 @@ jobs:
       - name: Check out the CI tools from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: Silo-Server/silo-server
+          repository: ${{ github.repository }}
           ref: ${{ job.workflow_sha || 'refs/heads/main' }}
           path: .ci-tools
           fetch-depth: 1
@@ -510,7 +510,7 @@ jobs:
       - name: Check out the CI tools from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: Silo-Server/silo-server
+          repository: ${{ github.repository }}
           ref: ${{ job.workflow_sha || 'refs/heads/main' }}
           path: .ci-tools
           fetch-depth: 1
@@ -580,7 +580,7 @@ jobs:
       - name: Check out the CI tools from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: Silo-Server/silo-server
+          repository: ${{ github.repository }}
           ref: ${{ job.workflow_sha || 'refs/heads/main' }}
           path: .ci-tools
           fetch-depth: 1
@@ -1174,7 +1174,7 @@ jobs:
       - name: Check out the CI tools from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: Silo-Server/silo-server
+          repository: ${{ github.repository }}
           ref: ${{ job.workflow_sha || 'refs/heads/main' }}
           path: .ci-tools
           fetch-depth: 1
